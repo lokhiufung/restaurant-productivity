@@ -2,6 +2,13 @@
 let stockItems = [];
 let currentFilter = 'all';
 
+function ensureShoppingSelectionFlag(items) {
+    items.forEach(item => {
+        item.selectedForShopping = !!item.selectedForShopping;
+    });
+    return items;
+}
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', function() {
     loadData();
@@ -57,7 +64,8 @@ function addNewItem() {
         currentStock: 0,
         minStock: minStock,
         maxStock: maxStock,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
+        selectedForShopping: false
     };
 
     stockItems.push(newItem);
@@ -137,7 +145,7 @@ function addSampleData() {
         {id: 47, name: 'Napkins (Small)', category: 'others', unit: 'packs', currentStock: 20, minStock: 10, maxStock: 40, lastUpdated: new Date().toISOString()}
     ];
     
-    stockItems = actualInventory;
+    stockItems = actualInventory.map(item => Object.assign({}, item, { selectedForShopping: false }));
     saveData();
     renderStockList();
     updateReports();
@@ -175,9 +183,12 @@ function renderStockList() {
         const status = getStockStatus(item);
         const statusClass = status === 'Low' ? 'status-low' : 
                           status === 'High' ? 'status-high' : 'status-ok';
+        const itemClass = item.selectedForShopping ? 'stock-item selected-for-shopping' : 'stock-item';
+        const selectionLabel = item.selectedForShopping ? 'Remove from Buying List' : 'Add to Buying List';
+        const selectionButtonClass = item.selectedForShopping ? 'btn btn-secondary btn-small' : 'btn btn-warning btn-small';
         
         return `
-            <div class="stock-item" data-category="${item.category}">
+            <div class="${itemClass}" data-category="${item.category}">
                 <div class="stock-item-header">
                     <div class="stock-item-name">${item.name}</div>
                     <div class="stock-status ${statusClass}">${status}</div>
@@ -190,6 +201,7 @@ function renderStockList() {
                            value="${item.currentStock}" 
                            onchange="updateStock(${item.id}, this.value)"
                            min="0">
+                    <button class="${selectionButtonClass}" onclick="toggleShoppingSelection(${item.id})">${selectionLabel}</button>
                     <button class="btn btn-secondary btn-small" onclick="editItem(${item.id})">Edit</button>
                     <button class="btn btn-danger btn-small" onclick="deleteItem(${item.id})">Delete</button>
                 </div>
@@ -215,6 +227,16 @@ function updateStock(itemId, newStock) {
         renderStockList();
         updateReports();
     }
+}
+
+function toggleShoppingSelection(itemId) {
+    const item = stockItems.find(i => i.id === itemId);
+    if (!item) return;
+
+    item.selectedForShopping = !item.selectedForShopping;
+    saveData();
+    renderStockList();
+    updateReports();
 }
 
 // Delete item
@@ -282,23 +304,42 @@ function updateReports() {
     document.getElementById('okStockItems').textContent = okStockItems;
     
     // Generate shopping list
-    const shoppingItems = stockItems.filter(item => getStockStatus(item) === 'Low');
+    const shoppingItems = stockItems.filter(item => item.selectedForShopping);
     const shoppingList = document.getElementById('shoppingList');
     
     if (shoppingItems.length === 0) {
-        shoppingList.innerHTML = '<p style="color: #666; font-style: italic;">All items are well stocked! 🎉</p>';
+        shoppingList.innerHTML = '<p style="color: #666; font-style: italic;">No items selected. Use "Add to Buying List" in the Inventory tab.</p>';
     } else {
-        shoppingList.innerHTML = shoppingItems.map(item => `
-            <div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px;">
-                <strong>${item.name}</strong> - Current: ${item.currentStock} ${item.unit}, Need: ${item.minStock - item.currentStock} ${item.unit}
-            </div>
-        `).join('');
+        shoppingList.innerHTML = shoppingItems.map(item => {
+            const status = getStockStatus(item);
+            const statusClass = status === 'Low' ? 'status-low' : 
+                              status === 'High' ? 'status-high' : 'status-ok';
+            const needed = Math.max(item.minStock - item.currentStock, 0);
+            return `
+                <div class="stock-item selected-for-shopping">
+                    <div class="stock-item-header">
+                        <div class="stock-item-name">${item.name}</div>
+                        <div class="stock-status ${statusClass}">${status}</div>
+                    </div>
+                    <div style="font-size: 14px; color: #666;">
+                        Current: ${item.currentStock} ${item.unit} | Target Min: ${item.minStock} ${item.unit}${needed > 0 ? ` | Need: ${needed} ${item.unit}` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 }
 
 // Generate report
 function generateReport() {
     const now = new Date();
+    const selectedItems = stockItems.filter(item => item.selectedForShopping);
+    const shoppingReportLines = selectedItems.length
+        ? selectedItems.map(item => {
+            const needed = Math.max(item.minStock - item.currentStock, 0);
+            return `- ${item.name}: Current ${item.currentStock} ${item.unit}` + (needed > 0 ? ` | Need ${needed} ${item.unit}` : '');
+        }).join('\n')
+        : 'No items selected';
     const report = `
 WEEKLY STOCK REPORT
 Generated: ${now.toLocaleDateString()} ${now.toLocaleTimeString()}
@@ -308,11 +349,10 @@ SUMMARY:
 - Low Stock Items: ${stockItems.filter(item => getStockStatus(item) === 'Low').length}
 - Items in Stock: ${stockItems.filter(item => getStockStatus(item) === 'OK').length}
 - Overstocked Items: ${stockItems.filter(item => getStockStatus(item) === 'High').length}
+- Selected Buying List Items: ${selectedItems.length}
 
 SHOPPING LIST:
-${stockItems.filter(item => getStockStatus(item) === 'Low')
-  .map(item => `- ${item.name}: Need ${Math.max(item.minStock - item.currentStock, 0)} ${item.unit}`)
-  .join('\n') || 'No items needed'}
+${shoppingReportLines}
 
 FULL INVENTORY:
 ${stockItems.map(item => `- ${item.name}: ${item.currentStock} ${item.unit} (${getStockStatus(item)})`).join('\n')}
@@ -328,6 +368,56 @@ ${stockItems.map(item => `- ${item.name}: ${item.currentStock} ${item.unit} (${g
     URL.revokeObjectURL(url);
 }
 
+function fallbackCopyToClipboard(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    let success = false;
+    try {
+        success = document.execCommand('copy');
+    } catch (e) {
+        success = false;
+    }
+    document.body.removeChild(textarea);
+    return success;
+}
+
+function copyBuyingList() {
+    const selectedItems = stockItems.filter(item => item.selectedForShopping);
+    if (selectedItems.length === 0) {
+        alert('No items selected. Use "Add to Buying List" in the Inventory tab first.');
+        return;
+    }
+
+    const numberedList = selectedItems
+        .map((item, index) => `${index + 1}. ${item.name}`)
+        .join('\n');
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(numberedList)
+            .then(() => alert('Buying list copied to clipboard!'))
+            .catch(() => {
+                const fallbackSuccess = fallbackCopyToClipboard(numberedList);
+                if (fallbackSuccess) {
+                    alert('Buying list copied to clipboard!');
+                } else {
+                    alert('Unable to copy automatically. Here is the list:\n\n' + numberedList);
+                }
+            });
+    } else {
+        const fallbackSuccess = fallbackCopyToClipboard(numberedList);
+        if (fallbackSuccess) {
+            alert('Buying list copied to clipboard!');
+        } else {
+            alert('Unable to copy automatically. Here is the list:\n\n' + numberedList);
+        }
+    }
+}
+
 // Data management
 function saveData() {
     try {
@@ -341,12 +431,15 @@ function loadData() {
     try {
         const saved = localStorage.getItem('restaurantStock');
         if (saved) {
-            stockItems = JSON.parse(saved);
+            stockItems = ensureShoppingSelectionFlag(JSON.parse(saved));
+        } else {
+            stockItems = [];
         }
     } catch (e) {
         console.error('Error loading data:', e);
         stockItems = [];
     }
+    ensureShoppingSelectionFlag(stockItems);
 }
 
 // Export/Import functions
@@ -405,13 +498,14 @@ function importMasterData() {
                         currentStock: parseFloat(values[3]) || 0,
                         minStock: parseInt(values[4]) || 0,
                         maxStock: parseInt(values[5]) || 100,
-                        lastUpdated: values[6] ? values[6].replace(/"/g, '') : new Date().toISOString()
+                        lastUpdated: values[6] ? values[6].replace(/"/g, '') : new Date().toISOString(),
+                        selectedForShopping: false
                     });
                 }
             }
             
             if (confirm(`Import ${importedItems.length} items from master inventory?\nThis will replace your current data.`)) {
-                stockItems = importedItems;
+                stockItems = ensureShoppingSelectionFlag(importedItems);
                 saveData();
                 renderStockList();
                 updateReports();
@@ -475,13 +569,14 @@ function importBackupData() {
                             currentStock: parseFloat(values[3]) || 0,
                             minStock: parseInt(values[4]) || 0,
                             maxStock: parseInt(values[5]) || 100,
-                            lastUpdated: values[6] ? values[6].replace(/"/g, '') : new Date().toISOString()
+                            lastUpdated: values[6] ? values[6].replace(/"/g, '') : new Date().toISOString(),
+                            selectedForShopping: false
                         });
                     }
                 }
                 
                 if (confirm(`Import ${importedItems.length} items from backup?\nThis will replace your current data.`)) {
-                    stockItems = importedItems;
+                    stockItems = ensureShoppingSelectionFlag(importedItems);
                     saveData();
                     renderStockList();
                     updateReports();
